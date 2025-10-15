@@ -2,41 +2,58 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 
-namespace EmployeeTableGenerator
+namespace EmployeePieChart
 {
     class Program
     {
         private static readonly HttpClient client = new HttpClient();
         private const string ApiUrl = "https://rc-vault-fap-live-1.azurewebsites.net/api/gettimeentries?code=vO17RnE8vuzXzPJo5eaLLjXjmRW07law99QTD90zat9FfOQJKKUcgQ==";
 
+        // Color palette for the pie chart segments
+        private static readonly Color[] ChartColors = new[]
+        {
+            Color.FromArgb(255, 99, 132),   // Red
+            Color.FromArgb(54, 162, 235),   // Blue
+            Color.FromArgb(255, 205, 86),   // Yellow
+            Color.FromArgb(75, 192, 192),   // Green
+            Color.FromArgb(153, 102, 255),  // Purple
+            Color.FromArgb(255, 159, 64),   // Orange
+            Color.FromArgb(201, 203, 207),  // Gray
+            Color.FromArgb(255, 99, 255),   // Pink
+            Color.FromArgb(50, 168, 82),    // Dark Green
+            Color.FromArgb(123, 36, 28)     // Brown
+        };
+
         static async Task Main(string[] args)
         {
             try
             {
+                Console.WriteLine("Fetching employee data...");
                 
+                // Fetch employee data from API
                 var employees = await GetEmployeeDataAsync();
                 
+                // Process and calculate percentages
+                var chartData = ProcessEmployeeData(employees);
                 
-                var processedData = ProcessEmployeeData(employees);
+                // Generate pie chart
+                Console.WriteLine("Generating pie chart...");
+                string imagePath = "employee_pie_chart.png";
+                GeneratePieChart(chartData, imagePath, 800, 600);
                 
-                
-                string htmlContent = GenerateHtmlTable(processedData);
-                
-                
-                string filePath = "employees_table.html";
-                await File.WriteAllTextAsync(filePath, htmlContent);
-                
-                Console.WriteLine($"HTML table generated successfully!");
-                Console.WriteLine($"File saved as: {Path.GetFullPath(filePath)}");
+                Console.WriteLine($"Pie chart generated successfully!");
+                Console.WriteLine($"File saved as: {Path.GetFullPath(imagePath)}");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -51,22 +68,35 @@ namespace EmployeeTableGenerator
             return employees ?? new List<EmployeeEntry>();
         }
 
-        public static List<EmployeeSummary> ProcessEmployeeData(List<EmployeeEntry> entries)
+        public static List<EmployeeChartData> ProcessEmployeeData(List<EmployeeEntry> entries)
         {
-            
+            // Group by employee and calculate total hours
             var employeeGroups = entries
                 .Where(e => !string.IsNullOrEmpty(e.EmployeeName))
                 .GroupBy(e => e.EmployeeName)
-                .Select(g => new EmployeeSummary
+                .Select(g => new 
                 {
                     Name = g.Key,
                     TotalHours = g.Sum(e => CalculateHoursWorked(e.StarTimeUtc, e.EndTimeUtc))
                 })
-                .Where(e => e.TotalHours > 0) // Filter out employees with invalid time data
+                .Where(e => e.TotalHours > 0)
                 .OrderByDescending(e => e.TotalHours)
                 .ToList();
 
-            return employeeGroups;
+            double totalAllHours = employeeGroups.Sum(e => e.TotalHours);
+
+            // Convert to chart data with percentages
+            var chartData = employeeGroups
+                .Select((e, index) => new EmployeeChartData
+                {
+                    Name = e.Name,
+                    TotalHours = e.TotalHours,
+                    Percentage = (e.TotalHours / totalAllHours) * 100,
+                    Color = ChartColors[index % ChartColors.Length]
+                })
+                .ToList();
+
+            return chartData;
         }
 
         public static double CalculateHoursWorked(DateTime startTime, DateTime endTime)
@@ -74,67 +104,125 @@ namespace EmployeeTableGenerator
             if (startTime >= endTime) return 0;
             
             TimeSpan timeWorked = endTime - startTime;
-            return Math.Round(timeWorked.TotalHours, 2);
+            return timeWorked.TotalHours;
         }
 
-        public static string GenerateHtmlTable(List<EmployeeSummary> employees)
+        public static void GeneratePieChart(List<EmployeeChartData> data, string filePath, int width, int height)
         {
-            var htmlBuilder = new StringBuilder();
-
-            htmlBuilder.AppendLine("<!DOCTYPE html>");
-            htmlBuilder.AppendLine("<html lang=\"en\">");
-            htmlBuilder.AppendLine("<head>");
-            htmlBuilder.AppendLine("    <meta charset=\"UTF-8\">");
-            htmlBuilder.AppendLine("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
-            htmlBuilder.AppendLine("    <title>Employee Work Hours</title>");
-            htmlBuilder.AppendLine("    <style>");
-            htmlBuilder.AppendLine("        body { font-family: Arial, sans-serif; margin: 20px; }");
-            htmlBuilder.AppendLine("        h1 { color: #333; text-align: center; }");
-            htmlBuilder.AppendLine("        table { width: 80%; margin: 0 auto; border-collapse: collapse; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }");
-            htmlBuilder.AppendLine("        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }");
-            htmlBuilder.AppendLine("        th { background-color: #4CAF50; color: white; font-weight: bold; }");
-            htmlBuilder.AppendLine("        tr:hover { background-color: #f5f5f5; }");
-            htmlBuilder.AppendLine("        .less-than-100 { background-color: #ffcccc; }");
-            htmlBuilder.AppendLine("        .less-than-100:hover { background-color: #ffb3b3; }");
-            htmlBuilder.AppendLine("        .total-hours { font-weight: bold; color: #2c3e50; }");
-            htmlBuilder.AppendLine("    </style>");
-            htmlBuilder.AppendLine("</head>");
-            htmlBuilder.AppendLine("<body>");
-            htmlBuilder.AppendLine("    <h1>Employee Work Hours Summary</h1>");
-            htmlBuilder.AppendLine("    <table>");
-            htmlBuilder.AppendLine("        <thead>");
-            htmlBuilder.AppendLine("            <tr>");
-            htmlBuilder.AppendLine("                <th>Name</th>");
-            htmlBuilder.AppendLine("                <th>Total Time Worked (Hours)</th>");
-            htmlBuilder.AppendLine("            </tr>");
-            htmlBuilder.AppendLine("        </thead>");
-            htmlBuilder.AppendLine("        <tbody>");
-
-            foreach (var employee in employees)
+            using (Bitmap bitmap = new Bitmap(width, height))
+            using (Graphics graphics = Graphics.FromImage(bitmap))
             {
-                string rowClass = employee.TotalHours < 100 ? "class=\"less-than-100\"" : "";
-                
-                htmlBuilder.AppendLine($"            <tr {rowClass}>");
-                htmlBuilder.AppendLine($"                <td>{EscapeHtml(employee.Name)}</td>");
-                htmlBuilder.AppendLine($"                <td class=\"total-hours\">{employee.TotalHours}</td>");
-                htmlBuilder.AppendLine("            </tr>");
+                // Set background color
+                graphics.Clear(Color.White);
+
+                // Anti-aliasing for better quality
+                graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+                // Define chart area (with padding)
+                Rectangle chartArea = new Rectangle(50, 50, width - 300, height - 100);
+                Rectangle legendArea = new Rectangle(width - 230, 50, 200, height - 100);
+
+                // Draw pie chart
+                DrawPieChart(graphics, data, chartArea);
+
+                // Draw legend
+                DrawLegend(graphics, data, legendArea);
+
+                // Draw title
+                DrawTitle(graphics, width);
+
+                // Save image
+                bitmap.Save(filePath, ImageFormat.Png);
             }
-
-            htmlBuilder.AppendLine("        </tbody>");
-            htmlBuilder.AppendLine("    </table>");
-            htmlBuilder.AppendLine("</body>");
-            htmlBuilder.AppendLine("</html>");
-
-            return htmlBuilder.ToString();
         }
 
-        private static string EscapeHtml(string input)
+        private static void DrawPieChart(Graphics graphics, List<EmployeeChartData> data, Rectangle chartArea)
         {
-            return System.Net.WebUtility.HtmlEncode(input);
+            float startAngle = 0f;
+
+            for (int i = 0; i < data.Count; i++)
+            {
+                var item = data[i];
+                float sweepAngle = (float)(item.Percentage * 3.6f); // 360 degrees / 100%
+
+                using (Brush brush = new SolidBrush(item.Color))
+                {
+                    graphics.FillPie(brush, chartArea, startAngle, sweepAngle);
+                    
+                    // Draw segment border
+                    using (Pen pen = new Pen(Color.Black, 1))
+                    {
+                        graphics.DrawPie(pen, chartArea, startAngle, sweepAngle);
+                    }
+                }
+
+                startAngle += sweepAngle;
+            }
+        }
+
+        private static void DrawLegend(Graphics graphics, List<EmployeeChartData> data, Rectangle legendArea)
+        {
+            using (Font legendFont = new Font("Arial", 10))
+            using (Font boldFont = new Font("Arial", 10, FontStyle.Bold))
+            {
+                // Draw legend title
+                graphics.DrawString("Employee Work Hours", boldFont, Brushes.Black, 
+                    legendArea.X, legendArea.Y - 25);
+
+                int yPos = legendArea.Y;
+                const int lineHeight = 20;
+                const int colorBoxSize = 15;
+                const int colorBoxPadding = 5;
+
+                for (int i = 0; i < data.Count; i++)
+                {
+                    var item = data[i];
+                    
+                    // Draw color box
+                    using (Brush colorBrush = new SolidBrush(item.Color))
+                    {
+                        graphics.FillRectangle(colorBrush, legendArea.X, yPos, colorBoxSize, colorBoxSize);
+                    }
+                    graphics.DrawRectangle(Pens.Black, legendArea.X, yPos, colorBoxSize, colorBoxSize);
+
+                    // Draw legend text
+                    string legendText = $"{item.Name} ({item.Percentage:F1}%)";
+                    
+                    // Truncate long names
+                    if (legendText.Length > 25)
+                    {
+                        legendText = legendText.Substring(0, 22) + "...";
+                    }
+
+                    graphics.DrawString(legendText, legendFont, Brushes.Black, 
+                        legendArea.X + colorBoxSize + colorBoxPadding, yPos);
+
+                    yPos += lineHeight;
+
+                    // Check if we need to create a new column
+                    if (yPos + lineHeight > legendArea.Bottom && i < data.Count - 1)
+                    {
+                        // This is a simple implementation - for many items, you'd want a better layout
+                        break;
+                    }
+                }
+            }
+        }
+
+        private static void DrawTitle(Graphics graphics, int width)
+        {
+            using (Font titleFont = new Font("Arial", 16, FontStyle.Bold))
+            {
+                string title = "Employee Work Hours Distribution";
+                SizeF titleSize = graphics.MeasureString(title, titleFont);
+                float titleX = (width - titleSize.Width) / 2;
+                
+                graphics.DrawString(title, titleFont, Brushes.DarkBlue, titleX, 10);
+            }
         }
     }
 
-    
+    // Data models
     public class EmployeeEntry
     {
         public string EmployeeName { get; set; }
@@ -142,9 +230,11 @@ namespace EmployeeTableGenerator
         public DateTime EndTimeUtc { get; set; }
     }
 
-    public class EmployeeSummary
+    public class EmployeeChartData
     {
         public string Name { get; set; }
         public double TotalHours { get; set; }
+        public double Percentage { get; set; }
+        public Color Color { get; set; }
     }
 }
